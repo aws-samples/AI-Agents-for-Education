@@ -1,8 +1,24 @@
-# Sample GitLab Project
+# Bedrock Agents for EDU Use Cases
 
-This sample project shows how a project in GitLab looks for demonstration purposes. It contains issues, merge requests and Markdown files in many branches,
-named and filled with lorem ipsum.
+This repository showcases example Bedrock Agents created for educational use cases.
 
-You can look around to get an idea how to structure your project and, when done, you can safely delete this project.
+## Repo Structure
 
-[Learn more about creating GitLab projects.](https://docs.gitlab.com/ee/gitlab-basics/create-project.html)
+- **Data:** Sample data that connects to the agents.
+- **Tools:** Tools for agents to use.
+- **Production:** Web UI and Bedrock agent integration.
+
+## Agent Example 1: Course Recommendation Agent
+
+- **Name:** Course Recommendation Agent
+- **Target Audience:** Higher-Ed Student Advisors
+
+### Deployment Instructions
+
+1. **Prepare Data:** Run the `data-prep-course-recommendation-agent.ipynb` notebook to prepare the necessary data.
+2. **Launch Agent:** Execute the `course-recommendation-agent.ipynb` notebook to deploy the agent in your AWS account.
+
+### Architecture
+
+![Course Recommendation Agent Architecture](image/course-recommendation-agent.png)
+

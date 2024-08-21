@@ -1,0 +1,9 @@
+student_id,term,course_code,credits,grade,major
+001,202401,BIOL P105,4.0,A,Biology
+001,202401,CHEM P101A,5.0,B,Biology
+001,202401,MATH P103,4.0,B+,Biology
+001,202401,PHYS P104A,4.0,A-,Biology
+002,202401,CHDV P223,3.0,B,Child Development
+002,202401,CHDV P122,3.0,A-,Child Development
+002,202401,CHDV P144,3.0,B+,Child Development
+002,202401,CHDV P143,3.0,A,Child Development
