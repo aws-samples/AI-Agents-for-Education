@@ -18,7 +18,8 @@ This repository showcases example Bedrock Agents created for educational use cas
 
 1. **Prepare Data:** 
 
-1.1 **Structured data:** Run the `data-prep-course-recommendation-agent.ipynb` notebook to prepare the necessary data.
+1.1 ***Structured data:*** Run the `data-prep-course-recommendation-agent.ipynb` notebook to prepare the necessary data.
+
 1.2 **Bedrock Knowledge Base:** 
 
 Setting up OpenSearch Serverless (Collection, dashboard, index) - 
