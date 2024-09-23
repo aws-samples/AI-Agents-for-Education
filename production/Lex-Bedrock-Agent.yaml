@@ -1,0 +1,44 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Parameters:
+  S3BucketName:
+    Description: S3 Bucket with Assets
+    Type: String
+    Default: machangsha-genai-demo
+  ZipFileLambdaFunction:
+    Description: LambdaHook
+    Type: String
+    Default: bedrock-lex.py.zip
+  BedrockAgentId:
+    Description: Bedrock Agent ID
+    Type: String
+    Default: EMPTY
+
+
+Resources:
+  BedrockAgentLambda:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://s3.us-east-1.amazonaws.com/${S3BucketName}/bedrockAgentLambda.template.json'
+      TimeoutInMinutes: "60"
+      Parameters:
+        S3BucketName: !Ref S3BucketName
+        ZipFileLambdaFunction: !Ref ZipFileLambdaFunction
+        BedrockAgentId: !Ref BedrockAgentId
+  BedrockAgentFallbackBot:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: BedrockAgentLambda
+    Properties:
+      TemplateURL: !Sub 'https://s3.us-east-1.amazonaws.com/${S3BucketName}/bedrockAgent-fallback-bot.template.json'
+      TimeoutInMinutes: "60"
+Outputs:
+  LambdaHookFunctionArn:
+    Description: 'ARN of the AWS Lambda Function used as a Hook'
+    Value: !GetAtt 
+      - BedrockAgentLambda
+      - Outputs.LambdaHookFunctionArn
+  BedrockAgentFallbackBotArn:
+    Description: 'ARN of Amazon Lex Bot'
+    Value: !GetAtt 
+      - BedrockAgentFallbackBot
+      - Outputs.BedrockAgentFallbackBotArn
