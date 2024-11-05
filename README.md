@@ -44,7 +44,7 @@ Upload sample document to S3 bucket (the one from previous step) -
 - Upload the pdf to S3
 - Sync Bedrock Knowledge Base
 
-2. **Launch Agent:** Execute the `course-recommendation-agent.ipynb` notebook to deploy the agent in your AWS account.
+2. **Launch Agent:** Run `course-recommendation-agent.ipynb` notebook to deploy the agent in your AWS account.
 
 ## Agent Example 2: Visual Math Agent
 - **Description:** Agent creating math questions with visual artifacts
@@ -53,4 +53,4 @@ Upload sample document to S3 bucket (the one from previous step) -
 
 ### Deployment Instructions of Visual Math Agent
 
-To be added.
+**Launch Agent:** Run `visual-math-agent.ipynb` notebook to deploy the agent in your AWS account. 
