@@ -14,7 +14,11 @@ This repository showcases example Bedrock Agents created for educational use cas
 - **Target Audience:** Higher-Ed Student Advisors
 - **Sample questions:** how many credits student 1 has earned? What courses are offerred this semester (202408) that's relevant to this student's major? Does this course conflict with student's schedule? What course do you recommend for student 1 to take this semester (202408) 
 
-### Deployment Instructions
+### Architecture
+
+![Course Recommendation Agent Architecture](image/course-recommendation-agent.png)
+
+### Deployment Instructions of Course Recommendation Agent
 
 1. **Prepare Data:** 
 
@@ -42,7 +46,11 @@ Upload sample document to S3 bucket (the one from previous step) -
 
 2. **Launch Agent:** Execute the `course-recommendation-agent.ipynb` notebook to deploy the agent in your AWS account.
 
-### Architecture
+## Agent Example 2: Visual Math Agent
+- **Description:** Agent creating math questions with visual artifacts
+- **Target Audience:** Math curriculum designer, Math content creator, instructors
+- **Sample questions:** create a multiple-choice question testing 3rd grader's understanding of equivalent fraction. create a question asking the time of an analog clock.
 
-![Course Recommendation Agent Architecture](image/course-recommendation-agent.png)
+### Deployment Instructions of Visual Math Agent
 
+To be added.
