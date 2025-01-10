@@ -54,3 +54,7 @@ Upload sample document to S3 bucket (the one from previous step) -
 ### Deployment Instructions of Visual Math Agent
 
 **Launch Agent:** Run `visual-math-agent.ipynb` notebook to deploy the agent in your AWS account. 
+
+## Agent Example 3: Course Assistant Agent (Coming soon)
+- **Description:** Agent navigating course content to answer questions and making study plans.
+- **Target Audience:** Students
