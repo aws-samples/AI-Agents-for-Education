@@ -58,3 +58,5 @@ Upload sample document to S3 bucket (the one from previous step) -
 ## Agent Example 3: Course Assistant Agent (Coming soon)
 - **Description:** Agent navigating course content to answer questions and making study plans.
 - **Target Audience:** Students
+
+## Agent Example 4: Multi-agent system for course recommendation (Coming soon)
