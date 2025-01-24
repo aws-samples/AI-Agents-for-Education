@@ -27,6 +27,7 @@ This repository showcases example Bedrock Agents created for educational use cas
 1.2 ***Bedrock Knowledge Base (unstructured data):*** You can set up KB either from Bedrock Console or through cloudformation templates.
 
 ****Set up through Cloudformation****
+
 Setting up OpenSearch Serverless (Collection, dashboard, index) 
 - Have access to your IAMUserArn. This can be obtained using Cloud9 command - `aws sts get-caller-identity --query Arn --output text` 
 - Go to cloudformation on AWS Console and Upload the `OpenSearch-Serverless.yml` and enter the parameters like stack name and IAMUserArn (output of above command)
