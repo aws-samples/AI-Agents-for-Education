@@ -68,4 +68,8 @@ Upload sample document to S3 bucket (the one from previous step) -
 - **Description:** Agent navigating course content to answer questions and making study plans.
 - **Target Audience:** Students
 
-## Agent Example 4: Multi-agent system for course recommendation (Coming soon)
+## Agent Example 4: Multi-agent system for course recommendation
+This is a multi-agent collaboration architecture for Agent Example 1
+### Architecture
+
+![Course Recommendation Agent Architecture](image/course-recommendation-multi-agent.png)
