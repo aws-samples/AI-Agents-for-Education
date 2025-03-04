@@ -1,3 +1,5 @@
 .ipynb_checkpoints/
 *.db
 *.pdf
+**/.ipynb_checkpoints/
+**/__pycache__/
