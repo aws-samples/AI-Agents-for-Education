@@ -97,6 +97,15 @@ DEFAULT_AGENT_IAM_POLICY = {
             ],
         },
         {
+            "Sid": "AmazonBedrockAgentsMultiAgentsPolicyProd",
+            "Effect": "Allow",
+            "Action": ["bedrock:GetAgentAlias", "bedrock:InvokeAgent"],
+            "Resource": [
+                "arn:aws:bedrock:*:*:agent/*",
+                "arn:aws:bedrock:*:*:agent-alias/*",
+            ],
+        },
+        {
             "Sid": "AmazonBedrockAgentBedrockInvokeGuardrailModelPolicy",
             "Effect": "Allow",
             "Action": [
