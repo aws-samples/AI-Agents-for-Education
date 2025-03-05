@@ -12,7 +12,11 @@ This repository showcases example Bedrock Agents created for educational use cas
 
 - **Name:** Course Recommendation Agent
 - **Target Audience:** Higher-Ed Student Advisors
-- **Sample questions:** how many credits student 1 has earned? What courses are offerred this semester (202408) that's relevant to this student's major? Does this course conflict with student's schedule? What course do you recommend for student 1 to take this semester (202408) 
+- **Sample questions:**
+  - How many credits student 1 has earned?
+  - What courses are offerred this semester (202408) that's relevant to this student's major?
+  - Does the course "BIOL P110" conflict with student's schedule?
+  - What course do you recommend for student 1 to take this semester (202408) 
 
 ### Architecture
 
