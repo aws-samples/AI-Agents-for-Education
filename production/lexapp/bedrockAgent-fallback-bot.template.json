@@ -1,0 +1,152 @@
+{
+ "Resources": {
+  "LexBotRole": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "lexv2.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "Policies": [
+     {
+      "PolicyDocument": {
+       "Statement": [
+        {
+         "Action": "polly:SynthesizeSpeech",
+         "Effect": "Allow",
+         "Resource": "*"
+        }
+       ],
+       "Version": "2012-10-17"
+      },
+      "PolicyName": "lex-run-bot"
+     },
+     {
+      "PolicyDocument": {
+       "Statement": [
+        {
+         "Action": [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+         ],
+         "Effect": "Allow",
+         "Resource": "*"
+        }
+       ],
+       "Version": "2012-10-17"
+      },
+      "PolicyName": "lex-put-logs"
+     }
+    ]
+   }
+  },
+  "BedrockAgentFallbackBot": {
+   "Type": "AWS::Lex::Bot",
+   "Properties": {
+    "DataPrivacy": {
+     "ChildDirected": false
+    },
+    "IdleSessionTTLInSeconds": 300,
+    "Name": "CF-test-Bot",
+    "RoleArn": {
+     "Fn::GetAtt": [
+      "LexBotRole",
+      "Arn"
+     ]
+    },
+    "AutoBuildBotLocales": false,
+    "BotLocales": [
+     {
+      "Intents": [
+       {
+        "IntentClosingSetting": {
+         "ClosingResponse": {
+          "MessageGroupsList": [
+           {
+            "Message": {
+             "PlainTextMessage": {
+              "Value": "Hello I am a sample Lex Bot that calls a Bedrock Agent"
+             }
+            }
+           }
+          ]
+         }
+        },
+        "Name": "DescribeLexBot",
+        "SampleUtterances": [
+         {
+          "Utterance": "Describe bot"
+         }
+        ]
+       },
+       {
+        "Description": "Fallback intent which calls Bedrock Agent",
+        "FulfillmentCodeHook": {
+         "Enabled": true
+        },
+        "DialogCodeHook": {
+         "Enabled": false
+        },
+        "Name": "FallbackIntent",
+        "ParentIntentSignature": "AMAZON.FallbackIntent"
+       }
+      ],
+      "LocaleId": "en_US",
+      "NluConfidenceThreshold": 0.4
+     }
+    ],
+    "TestBotAliasSettings": {
+     "BotAliasLocaleSettings": [
+      {
+       "BotAliasLocaleSetting": {
+        "CodeHookSpecification": {
+         "LambdaCodeHook": {
+          "CodeHookInterfaceVersion": "1.0",
+          "LambdaArn": {
+           "Fn::ImportValue": "BedrockAgentLambda:LambdaHookFunctionArn"
+          }
+         }
+        },
+        "Enabled": true
+       },
+       "LocaleId": "en_US"
+      }
+     ]
+    }
+   }
+  }
+ },
+
+ "Outputs": {
+  "BedrockAgentFallbackBotArn": {
+   "Value": {
+    "Fn::GetAtt": [
+     "BedrockAgentFallbackBot",
+     "Arn"
+    ]
+   },
+   "Export": {
+    "Name": "LexBotStack:BedrockAgentFallbackBotArn"
+   }
+  },
+  "BedrockAgentFallbackBotId": {
+   "Value": {
+    "Fn::GetAtt": [
+     "BedrockAgentFallbackBot",
+     "Id"
+    ]
+   },
+   "Export": {
+    "Name": "LexBotStack:BedrockAgentFallbackBotId"
+   }
+  }
+ }
+}
