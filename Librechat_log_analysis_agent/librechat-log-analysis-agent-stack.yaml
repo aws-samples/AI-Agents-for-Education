@@ -1,0 +1,1144 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'LibreChat Log Analysis Agent with Bedrock and Lambda'
+
+Parameters:
+  VPCID:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID where DocumentDB is deployed
+  
+  DocDBSubnet:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet ID where DocumentDB is deployed
+  
+  DocDBSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Security Group ID that allows access to DocumentDB
+  
+  DocumentDBSecretName:
+    Type: String
+    Default: LibreChat/docdb/app-user
+    Description: Name of the AWS Secrets Manager secret containing DocumentDB credentials
+  
+  BedrockModelId:
+    Type: String
+    Default: us.anthropic.claude-3-5-sonnet-20241022-v2:0
+    Description: Bedrock model ID to use for the agent
+    
+  LambdaLayerS3Bucket:
+    Type: String
+    Default: aws-lambda-layers-public
+    Description: S3 bucket containing the pymongo Lambda layer
+    
+  LambdaLayerS3Key:
+    Type: String
+    Default: pymongo-layer.zip
+    Description: S3 key for the pymongo Lambda layer
+
+Resources:
+  # Lambda Layer for pymongo
+  PyMongoLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: pymongo-layer
+      Description: Layer containing pymongo library
+      Content:
+        S3Bucket: !Ref LambdaLayerS3Bucket
+        S3Key: !Ref LambdaLayerS3Key
+      CompatibleRuntimes:
+        - python3.8
+        - python3.9
+        - python3.10
+        - python3.11
+
+  # Lambda execution role for DocumentDB access
+  DocDBLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DocDBSecretAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DocumentDBSecretName}*'
+
+  # Lambda function to query DocumentDB
+  MongoAnalysisLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: librechat-mongo-analysis
+      Handler: index.lambda_handler
+      Role: !GetAtt DocDBLambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import pymongo
+          import json
+          import os
+          from bson import ObjectId
+          from datetime import datetime, timedelta
+          from urllib.parse import quote_plus
+          import socket
+
+          def get_docdb_credentials():
+              secret_name = os.environ['SECRET_NAME']
+              region_name = os.environ.get('AWS_REGION', 'us-west-2')
+              
+              session = boto3.session.Session()
+              client = session.client(
+                  service_name='secretsmanager',
+                  region_name=region_name
+              )
+              
+              try:
+                  get_secret_value_response = client.get_secret_value(SecretId=secret_name)
+                  secret = json.loads(get_secret_value_response['SecretString'])
+                  return secret
+              except Exception as e:
+                  print(f"Error retrieving secret: {e}")
+                  raise e
+
+          def convert_objectids(obj):
+              """Recursively convert ObjectIds to strings"""
+              if isinstance(obj, ObjectId):
+                  return str(obj)
+              elif isinstance(obj, dict):
+                  return {key: convert_objectids(value) for key, value in obj.items()}
+              elif isinstance(obj, list):
+                  return [convert_objectids(item) for item in obj]
+              else:
+                  return obj
+
+          def get_parameter_value(parameters, param_name, default_value=None):
+              """Extract parameter value from Bedrock Agent parameters list"""
+              param = next((p for p in parameters if p['name'] == param_name), None)
+              if param:
+                  return param['value']
+              return default_value
+
+          def create_response(event, result_text, http_status_code=200):
+              """Create properly formatted response for Bedrock Agent"""
+              return {
+                  'response': {
+                      'actionGroup': event['actionGroup'],
+                      'httpStatusCode': http_status_code,
+                      'function': event['function'],
+                      'functionResponse': {
+                          'responseBody': {
+                              'TEXT': {
+                                  'body': result_text
+                              }
+                          }
+                      }
+                  },
+                  'messageVersion': event['messageVersion']
+              }
+
+          def lambda_handler(event, context):
+              client = None
+              
+              try:
+                  # Extract Bedrock Agent event details
+                  agent = event['agent']
+                  actionGroup = event['actionGroup']
+                  function = event['function']
+                  parameters = event.get('parameters', [])
+                  
+                  print(f"Agent: {agent}, ActionGroup: {actionGroup}, Function: {function}")
+                  print(f"Parameters: {parameters}")
+                  
+                  # Get credentials and connect to DocumentDB
+                  credentials = get_docdb_credentials()
+                  
+                  client = pymongo.MongoClient(
+                      host=credentials['host'],
+                      port=int(credentials.get('port', 27017)),
+                      username=credentials['username'],
+                      password=credentials['password'],
+                      tls=True,
+                      tlsAllowInvalidCertificates=True,
+                      retryWrites=False,
+                      serverSelectionTimeoutMS=10000
+                  )
+                  
+                  db = client['LibreChat']
+                  
+                  # Route to appropriate function based on the function name
+                  if function == 'analyzeUserActivity':
+                      return handle_analyze_user_activity(event, db, parameters)
+                  elif function == 'getConversationTrends':
+                      return handle_conversation_trends(event, db, parameters)
+                  elif function == 'analyzeUsagePatterns':
+                      return handle_usage_patterns(event, db, parameters)
+                  elif function == 'getActiveUsers':
+                      return handle_active_users(event, db, parameters)
+                  elif function == 'analyzeMessages':
+                      return handle_message_analysis(event, db, parameters)
+                  elif function == 'getConversationSummary':
+                      return handle_conversation_summary(event, db, parameters)
+                  elif function == 'getBasicStats':
+                      return handle_basic_stats(event, db, parameters)
+                  else:
+                      error_msg = f"Unknown function: {function}. Available functions: analyzeUserActivity, getConversationTrends, analyzeUsagePatterns, getActiveUsers, analyzeMessages, getConversationSummary, getBasicStats"
+                      return create_response(event, error_msg, 400)
+                      
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  error_msg = f"Error processing request: {str(e)}"
+                  return create_response(event, error_msg, 500)
+              
+              finally:
+                  if client:
+                      client.close()
+
+          def handle_analyze_user_activity(event, db, parameters):
+              """Analyze user engagement and activity patterns"""
+              try:
+                  days = int(get_parameter_value(parameters, 'days', 7))
+                  limit = int(get_parameter_value(parameters, 'limit', 10))
+                  
+                  date_threshold = datetime.now() - timedelta(days=days)
+                  
+                  # User activity analysis
+                  pipeline = [
+                      {"$match": {"createdAt": {"$gte": date_threshold}}},
+                      {"$group": {
+                          "_id": "$user",
+                          "conversation_count": {"$sum": 1},
+                          "last_activity": {"$max": "$createdAt"},
+                          "first_activity": {"$min": "$createdAt"}
+                      }},
+                      {"$sort": {"conversation_count": -1}},
+                      {"$limit": limit}
+                  ]
+                  
+                  user_activity = list(db.conversations.aggregate(pipeline))
+                  total_conversations = db.conversations.count_documents({"createdAt": {"$gte": date_threshold}})
+                  total_users = len(user_activity)
+                  avg_conversations = round(total_conversations / max(total_users, 1), 2)
+                  
+                  # Format response text
+                  result_text = f"User Activity Analysis ({days} days):\n"
+                  result_text += f"• Total conversations: {total_conversations}\n"
+                  result_text += f"• Active users: {total_users}\n"
+                  result_text += f"• Average conversations per user: {avg_conversations}\n\n"
+                  result_text += "Top active users:\n"
+                  
+                  for i, user in enumerate(user_activity[:5], 1):
+                      user_id = str(user['_id'])
+                      conversations = user['conversation_count']
+                      last_active = user['last_activity'].strftime('%Y-%m-%d %H:%M')
+                      result_text += f"{i}. User {user_id}: {conversations} conversations (last active: {last_active})\n"
+                  
+                  return create_response(event, result_text)
+                  
+              except Exception as e:
+                  return create_response(event, f"Error analyzing user activity: {str(e)}", 500)
+
+          def handle_conversation_trends(event, db, parameters):
+              """Analyze conversation trends over time"""
+              try:
+                  days = int(get_parameter_value(parameters, 'days', 30))
+                  date_threshold = datetime.now() - timedelta(days=days)
+                  
+                  # Daily conversation counts
+                  daily_pipeline = [
+                      {"$match": {"createdAt": {"$gte": date_threshold}}},
+                      {"$group": {
+                          "_id": {
+                              "year": {"$year": "$createdAt"},
+                              "month": {"$month": "$createdAt"},
+                              "day": {"$dayOfMonth": "$createdAt"}
+                          },
+                          "count": {"$sum": 1}
+                      }},
+                      {"$sort": {"_id": 1}}
+                  ]
+                  
+                  daily_trends = list(db.conversations.aggregate(daily_pipeline))
+                  total_conversations = sum(day['count'] for day in daily_trends)
+                  avg_daily = round(total_conversations / max(days, 1), 2)
+                  
+                  # Find peak day
+                  peak_day = max(daily_trends, key=lambda x: x['count']) if daily_trends else None
+                  
+                  result_text = f"Conversation Trends ({days} days):\n"
+                  result_text += f"• Total conversations: {total_conversations}\n"
+                  result_text += f"• Average per day: {avg_daily}\n"
+                  
+                  if peak_day:
+                      peak_date = f"{peak_day['_id']['year']}-{peak_day['_id']['month']:02d}-{peak_day['_id']['day']:02d}"
+                      result_text += f"• Peak day: {peak_date} with {peak_day['count']} conversations\n"
+                  
+                  result_text += "\nRecent daily activity:\n"
+                  for day in daily_trends[-7:]:  # Last 7 days
+                      date = f"{day['_id']['year']}-{day['_id']['month']:02d}-{day['_id']['day']:02d}"
+                      result_text += f"• {date}: {day['count']} conversations\n"
+                  
+                  return create_response(event, result_text)
+                  
+              except Exception as e:
+                  return create_response(event, f"Error analyzing conversation trends: {str(e)}", 500)
+
+          def handle_usage_patterns(event, db, parameters):
+              """Analyze usage patterns throughout the day/week"""
+              try:
+                  days = int(get_parameter_value(parameters, 'days', 7))
+                  date_threshold = datetime.now() - timedelta(days=days)
+                  
+                  # Hour of day analysis
+                  hourly_pipeline = [
+                      {"$match": {"createdAt": {"$gte": date_threshold}}},
+                      {"$group": {
+                          "_id": {"$hour": "$createdAt"},
+                          "count": {"$sum": 1}
+                      }},
+                      {"$sort": {"_id": 1}}
+                  ]
+                  
+                  hourly_usage = list(db.conversations.aggregate(hourly_pipeline))
+                  
+                  # Day of week analysis
+                  daily_pipeline = [
+                      {"$match": {"createdAt": {"$gte": date_threshold}}},
+                      {"$group": {
+                          "_id": {"$dayOfWeek": "$createdAt"},
+                          "count": {"$sum": 1}
+                      }},
+                      {"$sort": {"_id": 1}}
+                  ]
+                  
+                  daily_usage = list(db.conversations.aggregate(daily_pipeline))
+                  
+                  # Find peak times
+                  peak_hour = max(hourly_usage, key=lambda x: x['count']) if hourly_usage else None
+                  peak_day_num = max(daily_usage, key=lambda x: x['count'])['_id'] if daily_usage else None
+                  
+                  day_names = {1: "Sunday", 2: "Monday", 3: "Tuesday", 4: "Wednesday", 
+                              5: "Thursday", 6: "Friday", 7: "Saturday"}
+                  peak_day_name = day_names.get(peak_day_num, "Unknown") if peak_day_num else "Unknown"
+                  
+                  result_text = f"Usage Patterns ({days} days):\n"
+                  
+                  if peak_hour:
+                      result_text += f"• Peak hour: {peak_hour['_id']}:00 with {peak_hour['count']} conversations\n"
+                  
+                  if peak_day_name != "Unknown":
+                      result_text += f"• Most active day: {peak_day_name}\n"
+                  
+                  result_text += "\nUsage by hour (top 5):\n"
+                  sorted_hours = sorted(hourly_usage, key=lambda x: x['count'], reverse=True)[:5]
+                  for hour_data in sorted_hours:
+                      hour = hour_data['_id']
+                      count = hour_data['count']
+                      result_text += f"• {hour}:00 - {count} conversations\n"
+                  
+                  result_text += "\nUsage by day of week:\n"
+                  for day_data in sorted(daily_usage, key=lambda x: x['_id']):
+                      day_name = day_names.get(day_data['_id'], "Unknown")
+                      count = day_data['count']
+                      result_text += f"• {day_name}: {count} conversations\n"
+                  
+                  return create_response(event, result_text)
+                  
+              except Exception as e:
+                  return create_response(event, f"Error analyzing usage patterns: {str(e)}", 500)
+
+          def handle_active_users(event, db, parameters):
+              """Get most active users across different time periods"""
+              try:
+                  # Different time periods
+                  last_24h = datetime.now() - timedelta(hours=24)
+                  last_7d = datetime.now() - timedelta(days=7)
+                  last_30d = datetime.now() - timedelta(days=30)
+                  
+                  active_24h = db.conversations.count_documents({"createdAt": {"$gte": last_24h}})
+                  active_7d = db.conversations.count_documents({"createdAt": {"$gte": last_7d}})
+                  active_30d = db.conversations.count_documents({"createdAt": {"$gte": last_30d}})
+                  
+                  # Top users this week
+                  pipeline = [
+                      {"$match": {"createdAt": {"$gte": last_7d}}},
+                      {"$group": {
+                          "_id": "$user",
+                          "conversations": {"$sum": 1}
+                      }},
+                      {"$sort": {"conversations": -1}},
+                      {"$limit": 5}
+                  ]
+                  
+                  top_users_week = list(db.conversations.aggregate(pipeline))
+                  
+                  result_text = "Active Users Summary:\n"
+                  result_text += f"• Conversations last 24 hours: {active_24h}\n"
+                  result_text += f"• Conversations last 7 days: {active_7d}\n"
+                  result_text += f"• Conversations last 30 days: {active_30d}\n\n"
+                  
+                  result_text += "Top users this week:\n"
+                  for i, user in enumerate(top_users_week, 1):
+                      user_id = str(user['_id'])
+                      conversations = user['conversations']
+                      result_text += f"{i}. User {user_id}: {conversations} conversations\n"
+                  
+                  return create_response(event, result_text)
+                  
+              except Exception as e:
+                  return create_response(event, f"Error getting active users: {str(e)}", 500)
+
+          def handle_message_analysis(event, db, parameters):
+              """Analyze message patterns and content"""
+              try:
+                  days = int(get_parameter_value(parameters, 'days', 7))
+                  date_threshold = datetime.now() - timedelta(days=days)
+                  
+                  total_messages = db.messages.count_documents({"createdAt": {"$gte": date_threshold}})
+                  
+                  # Average message length by author
+                  pipeline = [
+                      {"$match": {"createdAt": {"$gte": date_threshold}}},
+                      {"$project": {
+                          "text_length": {"$strLenCP": {"$ifNull": ["$text", ""]}},
+                          "author": 1,
+                          "createdAt": 1
+                      }},
+                      {"$group": {
+                          "_id": "$author",
+                          "avg_message_length": {"$avg": "$text_length"},
+                          "message_count": {"$sum": 1},
+                          "total_characters": {"$sum": "$text_length"}
+                      }},
+                      {"$sort": {"message_count": -1}}
+                  ]
+                  
+                  message_stats = list(db.messages.aggregate(pipeline))
+                  
+                  result_text = f"Message Analysis ({days} days):\n"
+                  result_text += f"• Total messages: {total_messages}\n"
+                  result_text += f"• Average messages per day: {round(total_messages / max(days, 1), 2)}\n\n"
+                  
+                  result_text += "Message statistics by author:\n"
+                  for stat in message_stats[:5]:  # Top 5 authors
+                      author = stat['_id']
+                      count = stat['message_count']
+                      avg_length = round(stat['avg_message_length'], 1)
+                      result_text += f"• {author}: {count} messages (avg length: {avg_length} chars)\n"
+                  
+                  return create_response(event, result_text)
+                  
+              except Exception as e:
+                  return create_response(event, f"Error analyzing messages: {str(e)}", 500)
+
+          def handle_conversation_summary(event, db, parameters):
+              """Get a summary of recent conversations"""
+              try:
+                  limit = int(get_parameter_value(parameters, 'limit', 5))
+                  
+                  # Recent conversations with message counts
+                  pipeline = [
+                      {"$sort": {"createdAt": -1}},
+                      {"$limit": limit},
+                      {"$lookup": {
+                          "from": "messages",
+                          "localField": "_id",
+                          "foreignField": "conversationId",
+                          "as": "messages"
+                      }},
+                      {"$project": {
+                          "title": 1,
+                          "createdAt": 1,
+                          "user": 1,
+                          "message_count": {"$size": "$messages"}
+                      }}
+                  ]
+                  
+                  recent_conversations = list(db.conversations.aggregate(pipeline))
+                  
+                  result_text = f"Recent Conversations (latest {limit}):\n\n"
+                  
+                  for i, conv in enumerate(recent_conversations, 1):
+                      title = conv.get('title', 'Untitled')
+                      created = conv['createdAt'].strftime('%Y-%m-%d %H:%M')
+                      user_id = str(conv['user'])
+                      msg_count = conv['message_count']
+                      
+                      result_text += f"{i}. {title}\n"
+                      result_text += f"   User: {user_id}\n"
+                      result_text += f"   Created: {created}\n"
+                      result_text += f"   Messages: {msg_count}\n\n"
+                  
+                  return create_response(event, result_text)
+                  
+              except Exception as e:
+                  return create_response(event, f"Error getting conversation summary: {str(e)}", 500)
+
+          def handle_basic_stats(event, db, parameters):
+              """Get basic database statistics"""
+              try:
+                  collections = db.list_collection_names()
+                  stats = {}
+                  
+                  for collection_name in collections:
+                      try:
+                          collection = db[collection_name]
+                          count = collection.count_documents({})
+                          stats[collection_name] = count
+                      except Exception as e:
+                          stats[collection_name] = f"Error: {str(e)}"
+                  
+                  result_text = "LibreChat Database Statistics:\n"
+                  result_text += f"• Total collections: {len(collections)}\n\n"
+                  
+                  result_text += "Document counts by collection:\n"
+                  for collection, count in stats.items():
+                      result_text += f"• {collection}: {count}\n"
+                  
+                  # Calculate total documents
+                  total_docs = sum(count for count in stats.values() if isinstance(count, int))
+                  result_text += f"\n• Total documents: {total_docs}"
+                  
+                  return create_response(event, result_text)
+                  
+              except Exception as e:
+                  return create_response(event, f"Error getting basic stats: {str(e)}", 500)
+      Runtime: python3.9
+      Timeout: 60
+      MemorySize: 256
+      Layers:
+        - !Ref PyMongoLayer
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref DocDBSecurityGroupId
+        SubnetIds:
+          - !Ref DocDBSubnet
+      Environment:
+        Variables:
+          SECRET_NAME: !Ref DocumentDBSecretName
+
+  # Bedrock Agent Role
+  BedrockAgentRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonBedrockFullAccess
+      Policies:
+        - PolicyName: InvokeLambdaPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: !GetAtt MongoAnalysisLambda.Arn
+
+  # Bedrock Agent
+  LogAnalysisAgent:
+    Type: AWS::Bedrock::Agent
+    Properties:
+      AgentName: LibreChatLogAnalysisAgent
+      AgentResourceRoleArn: !GetAtt BedrockAgentRole.Arn
+      Description: Agent for analyzing LibreChat logs and user activity
+      IdleSessionTTLInSeconds: 1800
+      Instruction: |
+        You are a log analysis assistant for LibreChat. Your purpose is to help administrators understand user activity, 
+        conversation trends, and usage patterns in the LibreChat application. You can query the MongoDB database to provide 
+        insights about user engagement, message patterns, and system usage.
+        
+        Available functions:
+        - analyzeUserActivity: Analyze user engagement and activity patterns
+        - getConversationTrends: Analyze conversation trends over time
+        - analyzeUsagePatterns: Analyze usage patterns throughout the day/week
+        - getActiveUsers: Get most active users across different time periods
+        - analyzeMessages: Analyze message patterns and content
+        - getConversationSummary: Get a summary of recent conversations
+        - getBasicStats: Get basic database statistics
+        
+        When asked about user activity, usage, or statistics, use the appropriate function to retrieve the data.
+        Always format your responses in a clear, readable way with bullet points and sections as appropriate.
+      ActionGroups:
+        - ActionGroupName: LogAnalysis
+          Description: Functions for analyzing LibreChat logs and user activity
+          ActionGroupExecutor:
+            Lambda: !GetAtt MongoAnalysisLambda.Arn
+          FunctionSchema:
+            Functions:
+              - Name: analyzeUserActivity
+                Description: Analyze user engagement and activity patterns
+                Parameters:
+                  days:
+                    Type: integer
+                    Description: Number of days to analyze (default 7)
+                    Required: false
+                  limit:
+                    Type: integer
+                    Description: Maximum number of users to return (default 10)
+                    Required: false
+              - Name: getConversationTrends
+                Description: Analyze conversation trends over time
+                Parameters:
+                  days:
+                    Type: integer
+                    Description: Number of days to analyze (default 30)
+                    Required: false
+              - Name: analyzeUsagePatterns
+                Description: Analyze usage patterns throughout the day/week
+                Parameters:
+                  days:
+                    Type: integer
+                    Description: Number of days to analyze (default 7)
+                    Required: false
+              - Name: getActiveUsers
+                Description: Get most active users across different time periods
+                Parameters: {}
+              - Name: analyzeMessages
+                Description: Analyze message patterns and content
+                Parameters:
+                  days:
+                    Type: integer
+                    Description: Number of days to analyze (default 7)
+                    Required: false
+              - Name: getConversationSummary
+                Description: Get a summary of recent conversations
+                Parameters:
+                  limit:
+                    Type: integer
+                    Description: Maximum number of conversations to return (default 5)
+                    Required: false
+              - Name: getBasicStats
+                Description: Get basic database statistics
+                Parameters: {}
+      FoundationModel: !Ref BedrockModelId
+
+  # Bedrock Agent Alias
+  LogAnalysisAgentAlias:
+    Type: AWS::Bedrock::AgentAlias
+    DependsOn: LogAnalysisAgent
+    Properties:
+      AgentId: !GetAtt LogAnalysisAgent.AgentId
+      AgentAliasName: Production
+      Description: Production alias for LibreChat Log Analysis Agent
+
+  # Grant Bedrock Agent permission to invoke the Lambda
+  BedrockAgentInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt MongoAnalysisLambda.Arn    # or !Ref MongoAnalysisLambda
+      Action: lambda:InvokeFunction
+      Principal: bedrock.amazonaws.com
+      SourceArn: !GetAtt LogAnalysisAgent.AgentArn          # the ARN of your Bedrock Agent
+
+
+  # Lambda execution role for API Gateway integration
+  ApiGatewayLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: BedrockAgentInvoke
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeAgent
+                Resource: !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent-alias/${LogAnalysisAgent.AgentId}/*'
+
+  # Lambda function to invoke Bedrock Agent
+  ApiGatewayLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: LogAnalysisAgentAlias
+    Properties:
+      FunctionName: apigateway-to-bedrockagent
+      Handler: index.lambda_handler
+      Role: !GetAtt ApiGatewayLambdaRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          from botocore.exceptions import ClientError
+          import botocore.config
+          import time
+
+          def get_bedrock_agent_response(user_message, agent_id, agent_alias_id, session_id, stream=False):
+              try:
+                  bedrock_agent = boto3.client(
+                      'bedrock-agent-runtime',
+                      region_name=os.environ.get('AWS_REGION', 'us-west-2'),
+                      config=botocore.config.Config(
+                          read_timeout=120,  # Increased timeout for longer responses
+                          connect_timeout=5,
+                          retries={'max_attempts': 1},
+                          tcp_keepalive=True
+                      )
+                  )
+                  
+                  try:
+                      start_time = time.time()
+                      response = bedrock_agent.invoke_agent(
+                          agentId=agent_id,
+                          agentAliasId=agent_alias_id,
+                          sessionId=session_id,
+                          inputText=user_message
+                      )
+                      
+                      # If streaming is requested, return the raw chunks for streaming
+                      if stream:
+                          return response['completion'], time.time() - start_time
+                      
+                      # Otherwise, collect all chunks and return the complete response
+                      response_content = []
+                      for event in response['completion']:
+                          if 'chunk' in event:
+                              chunk_data = event['chunk']
+                              if 'bytes' in chunk_data:
+                                  response_content.append(chunk_data['bytes'].decode('utf-8'))
+                      
+                      final_response = ''.join(response_content)
+                      elapsed_time = time.time() - start_time
+                      print(f"Bedrock response time: {elapsed_time:.2f} seconds")
+                      return final_response if final_response else "No response content received", elapsed_time
+                          
+                  except ClientError as e:
+                      error_code = e.response['Error']['Code']
+                      error_map = {
+                          'ValidationException': f"Validation Error: {str(e)}",
+                          'AccessDeniedException': "Access Denied. Please check the Lambda role permissions.",
+                          'ThrottlingException': "Service is currently busy. Please try again in a few moments."
+                      }
+                      print(f"AWS Error: {str(e)}")
+                      return error_map.get(error_code, f"AWS Error: {str(e)}"), 0
+                      
+              except Exception as e:
+                  error_message = f"Unexpected Error: {str(e)}"
+                  print(error_message)
+                  import traceback
+                  print("Full traceback:")
+                  print(traceback.format_exc())
+                  return f"An error occurred: {str(e)}", 0
+
+          def lambda_handler(event, context):
+              start_time = time.time()
+              
+              try:
+                  print("Received API Gateway request:", json.dumps(event, default=str))
+                  
+                  # Extract the message from the request body
+                  if 'body' in event:
+                      # Handle request from API Gateway
+                      body = json.loads(event['body']) if isinstance(event['body'], str) else event['body']
+                      
+                      # Check if this is an OpenAI-compatible request
+                      if 'messages' in body and isinstance(body['messages'], list):
+                          # Check if this is a title generation request
+                          is_title_request = False
+                          conversation_text = ""
+                          
+                          # Look for system message with title generation instructions
+                          for msg in body['messages']:
+                              if msg.get('role') == 'system' and 'content' in msg and 'generate a concise' in msg['content'].lower() and 'title' in msg['content'].lower():
+                                  is_title_request = True
+                                  # Extract conversation from the system message
+                                  content = msg['content']
+                                  if '||>User:' in content and '||>Response:' in content:
+                                      conversation_parts = content.split('||>')
+                                      for part in conversation_parts:
+                                          if part.startswith('User:') or part.startswith('Response:'):
+                                              conversation_text += part + "\n"
+                                  break
+                          
+                          if is_title_request:
+                              # Generate a simple title based on the conversation
+                              user_parts = [p.replace('User:', '').strip() for p in conversation_text.split('||>') if p.startswith('User:')]
+                              if user_parts:
+                                  user_message = user_parts[0]
+                                  # Generate a simple title (you could make this more sophisticated)
+                                  title = user_message[:20] + "..." if len(user_message) > 20 else user_message
+                                  
+                                  # Return a response in OpenAI format
+                                  openai_response = {
+                                      'id': f"chatcmpl-{int(time.time()*1000)}",
+                                      'object': 'chat.completion',
+                                      'created': int(time.time()),
+                                      'model': body.get('model', 'bedrock-model'),
+                                      'choices': [
+                                          {
+                                              'message': {
+                                                  'role': 'assistant',
+                                                  'content': title
+                                              },
+                                              'index': 0,
+                                              'finish_reason': 'stop'
+                                          }
+                                      ],
+                                      'usage': {
+                                          'prompt_tokens': len(conversation_text) // 4,
+                                          'completion_tokens': len(title) // 4,
+                                          'total_tokens': (len(conversation_text) + len(title)) // 4
+                                      }
+                                  }
+                                  
+                                  return {
+                                      'statusCode': 200,
+                                      'headers': {
+                                          'Content-Type': 'application/json',
+                                          'Access-Control-Allow-Origin': '*'
+                                      },
+                                      'body': json.dumps(openai_response)
+                                  }
+                          
+                          # Extract the last user message from the messages array (original code)
+                          user_message = None
+                          for msg in reversed(body['messages']):
+                              if msg.get('role') == 'user' and 'content' in msg:
+                                  user_message = msg['content']
+                                  break
+                          
+                          if not user_message:
+                              return {
+                                  'statusCode': 400,
+                                  'headers': {
+                                      'Content-Type': 'application/json',
+                                      'Access-Control-Allow-Origin': '*'
+                                  },
+                                  'body': json.dumps({
+                                      'error': 'No user message found in the messages array'
+                                  })
+                              }
+                      else:
+                          # Fall back to the original format
+                          user_message = body.get('message', '')
+                          
+                      # Get or generate session ID
+                      session_id = body.get('sessionId', f"session-{time.time()}")
+                      
+                      # Get model from request or use default
+                      model = body.get('model', 'anthropic.claude-3-5-sonnet-20241022-v2')
+                      
+                      # Check if streaming is requested
+                      stream = body.get('stream', False)
+                  else:
+                      # Handle direct Lambda invocation
+                      user_message = event.get('message', '')
+                      session_id = event.get('sessionId', f"session-{time.time()}")
+                      model = event.get('model', 'anthropic.claude-3-5-sonnet-20241022-v2')
+                      stream = event.get('stream', False)
+                  
+                  agent_id = os.environ['BEDROCK_AGENT_ID']
+                  agent_alias_id = os.environ['BEDROCK_AGENT_ALIAS_ID']
+                  
+                  # Handle streaming vs non-streaming responses
+                  if stream:
+                      # Get streaming response from Bedrock
+                      bedrock_stream, elapsed_time = get_bedrock_agent_response(
+                          user_message, 
+                          agent_id, 
+                          agent_alias_id, 
+                          session_id,
+                          stream=True
+                      )
+                      
+                      # Format as SSE for OpenAI compatibility
+                      response_id = f"chatcmpl-{int(time.time()*1000)}"
+                      sse_chunks = []
+                      
+                      # Add the role chunk first
+                      role_chunk = {
+                          "id": response_id,
+                          "object": "chat.completion.chunk",
+                          "created": int(time.time()),
+                          "model": model,
+                          "choices": [
+                              {
+                                  "index": 0,
+                                  "delta": {"role": "assistant"},
+                                  "finish_reason": None
+                              }
+                          ]
+                      }
+                      sse_chunks.append(f"data: {json.dumps(role_chunk)}\n\n")
+                      
+                      # Process Bedrock chunks
+                      content_so_far = ""
+                      for event in bedrock_stream:
+                          if 'chunk' in event:
+                              chunk_data = event['chunk']
+                              if 'bytes' in chunk_data:
+                                  content = chunk_data['bytes'].decode('utf-8')
+                                  content_so_far += content
+                                  
+                                  # Create OpenAI-compatible chunk
+                                  content_chunk = {
+                                      "id": response_id,
+                                      "object": "chat.completion.chunk",
+                                      "created": int(time.time()),
+                                      "model": model,
+                                      "choices": [
+                                          {
+                                              "index": 0,
+                                              "delta": {"content": content},
+                                              "finish_reason": None
+                                          }
+                                      ]
+                                  }
+                                  sse_chunks.append(f"data: {json.dumps(content_chunk)}\n\n")
+                      
+                      # Add the final chunk
+                      final_chunk = {
+                          "id": response_id,
+                          "object": "chat.completion.chunk",
+                          "created": int(time.time()),
+                          "model": model,
+                          "choices": [
+                              {
+                                  "index": 0,
+                                  "delta": {},
+                                  "finish_reason": "stop"
+                              }
+                          ]
+                      }
+                      sse_chunks.append(f"data: {json.dumps(final_chunk)}\n\n")
+                      
+                      # Add the [DONE] marker
+                      sse_chunks.append("data: [DONE]\n\n")
+                      
+                      # Join all chunks
+                      sse_response = "".join(sse_chunks)
+                      
+                      elapsed_time = time.time() - start_time
+                      print(f"Total streaming response time: {elapsed_time:.2f} seconds")
+                      
+                      return {
+                          'statusCode': 200,
+                          'headers': {
+                              'Content-Type': 'text/event-stream',
+                              'Cache-Control': 'no-cache',
+                              'Connection': 'keep-alive',
+                              'Access-Control-Allow-Origin': '*'
+                          },
+                          'body': sse_response,
+                          'isBase64Encoded': False
+                      }
+                  else:
+                      # Get non-streaming response
+                      bot_response, response_time = get_bedrock_agent_response(
+                          user_message, 
+                          agent_id, 
+                          agent_alias_id, 
+                          session_id
+                      )
+                      
+                      elapsed_time = time.time() - start_time
+                      print(f"Total response time: {elapsed_time:.2f} seconds")
+                      
+                      # Format response in OpenAI-compatible format
+                      if 'messages' in body:
+                          openai_response = {
+                              'id': f"chatcmpl-{int(time.time()*1000)}",
+                              'object': 'chat.completion',
+                              'created': int(time.time()),
+                              'model': model,
+                              'choices': [
+                                  {
+                                      'message': {
+                                          'role': 'assistant',
+                                          'content': bot_response
+                                      },
+                                      'index': 0,
+                                      'finish_reason': 'stop'
+                                  }
+                              ],
+                              'usage': {
+                                  'prompt_tokens': len(user_message) // 4,  # Rough estimate
+                                  'completion_tokens': len(bot_response) // 4,  # Rough estimate
+                                  'total_tokens': (len(user_message) + len(bot_response)) // 4  # Rough estimate
+                              }
+                          }
+                          
+                          return {
+                              'statusCode': 200,
+                              'headers': {
+                                  'Content-Type': 'application/json',
+                                  'Access-Control-Allow-Origin': '*'
+                              },
+                              'body': json.dumps(openai_response)
+                          }
+                      else:
+                          # Return in original format for backward compatibility
+                          return {
+                              'statusCode': 200,
+                              'headers': {
+                                  'Content-Type': 'application/json',
+                                  'Access-Control-Allow-Origin': '*'
+                              },
+                              'body': json.dumps({
+                                  'response': bot_response,
+                                  'responseTime': elapsed_time,
+                                  'sessionId': session_id
+                              })
+                          }
+              except Exception as e:
+                  error_message = f"Lambda Error: {str(e)}"
+                  print(error_message)
+                  elapsed_time = time.time() - start_time
+                  print(f"Error response time: {elapsed_time:.2f} seconds")
+                  return {
+                      'statusCode': 500,
+                      'headers': {
+                          'Content-Type': 'application/json',
+                          'Access-Control-Allow-Origin': '*'
+                      },
+                      'body': json.dumps({
+                          'error': error_message,
+                          'responseTime': elapsed_time
+                      })
+                  }
+      Runtime: python3.9
+      Timeout: 120
+      MemorySize: 256
+      Environment:
+        Variables:
+          BEDROCK_AGENT_ID: !GetAtt LogAnalysisAgent.AgentId
+          BEDROCK_AGENT_ALIAS_ID: !GetAtt LogAnalysisAgentAlias.AgentAliasId
+
+  # API Gateway REST API
+  ApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: LibreChatLogAnalysisAPI
+      Description: API Gateway for LibreChat Log Analysis Agent
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  # API Gateway Resource
+  ApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: analyze
+
+  # API Gateway Method
+  ApiMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref ApiResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ApiGatewayLambda.Arn}/invocations'
+
+  # API Gateway CORS Method
+  ApiCorsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref ApiResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: "{}"
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # API Gateway Deployment
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - ApiMethod
+      - ApiCorsMethod
+    Properties:
+      RestApiId: !Ref ApiGateway
+      StageName: prod
+
+  # Lambda Permission for API Gateway
+  ApiGatewayLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ApiGatewayLambda
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/POST/analyze'
+
+Outputs:
+  ApiGatewayUrl:
+    Description: URL of the API Gateway endpoint to configure in LibreChat
+    Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/analyze'
+  
+  BedrockAgentId:
+    Description: ID of the created Bedrock Agent
+    Value: !GetAtt LogAnalysisAgent.AgentId
+  
+  BedrockAgentAliasId:
+    Description: ID of the created Bedrock Agent Alias
+    Value: !GetAtt LogAnalysisAgentAlias.AgentAliasId
+  
+  MongoAnalysisLambdaArn:
+    Description: ARN of the Lambda function that queries DocumentDB
+    Value: !GetAtt MongoAnalysisLambda.Arn
+  
+  ApiGatewayLambdaArn:
+    Description: ARN of the Lambda function that integrates with API Gateway
+    Value: !GetAtt ApiGatewayLambda.Arn
+  
+  LibreChatConfigExample:
+    Description: Example configuration for LibreChat to use this agent
+    Value: !Sub |
+      # Add this to your LibreChat configuration:
+      ENDPOINTS:
+        custom:
+          - name: "Log Analysis"
+            apiKey: ""
+            baseURL: "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod"
+            models:
+              - "log-analysis"
+            titleConvo: false
+            titleModel: "log-analysis"
+            summarize: false
+            summaryModel: "log-analysis"
+            forcePrompt: false
