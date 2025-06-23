@@ -1,0 +1,123 @@
+{
+ "Parameters": {
+    "S3BucketName": {"Type": "String", "Default": "EMPTY"},
+    "ZipFileLambdaFunction": {"Type": "String", "Default": "EMPTY"},
+    "BedrockAgentId": {"Type": "String", "Default": "EMPTY"}
+ },
+
+ "Resources": {
+  "LambdaHookRole": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "lambda.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+       ]
+      ]
+     }
+    ],
+    "Policies": [
+     {
+      "PolicyDocument": {
+       "Statement": [
+        {
+         "Action": "bedrock:*",
+         "Effect": "Allow",
+         "Resource": "*"
+        }
+       ],
+       "Version": "2012-10-17"
+      },
+      "PolicyName": "invoke-bedrock"
+     },
+     {
+      "PolicyDocument": {
+       "Statement": [
+        {
+         "Action": "S3:*",
+         "Effect": "Allow",
+         "Resource": "*"
+        }
+       ],
+       "Version": "2012-10-17"
+      },
+      "PolicyName": "S3-access"
+     }
+    ],
+    "RoleName": "bedrock_bot_role"
+   }
+  },
+  "LambdaHookFunction": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Code": {
+     "S3Bucket": {"Ref": "S3BucketName"},
+     "S3Key": {"Ref": "ZipFileLambdaFunction"}
+    },
+    "Role": {
+     "Fn::GetAtt": [
+      "LambdaHookRole",
+      "Arn"
+     ]
+    },
+    "Description": "Lambda Hook for dispatching LexV2 Requests",
+    "Environment": {
+     "Variables": {
+      "agent_id": {"Ref": "BedrockAgentId"}
+     }
+    },
+    "FunctionName": "cf-test-lex-bedrock-agent",
+    "Handler": "bedrock-lex.lambda_handler",
+    "MemorySize": 512,
+    "Runtime": "python3.12",
+    "Timeout": 900
+   }
+  },
+  "LambdaHookAllowLexInvoke": {
+   "Type": "AWS::Lambda::Permission",
+   "Properties": {
+    "Action": "lambda:invokeFunction",
+    "FunctionName": {
+     "Fn::GetAtt": [
+      "LambdaHookFunction",
+      "Arn"
+     ]
+    },
+    "Principal": "lexv2.amazonaws.com",
+    "SourceArn": {"Fn::Sub": "arn:aws:lex:${AWS::Region}:${AWS::AccountId}:bot-alias/*"}
+   }
+  }
+ },
+ "Outputs": {
+  "LambdaHookFunctionArn": {
+   "Value": {
+    "Fn::GetAtt": [
+     "LambdaHookFunction",
+     "Arn"
+    ]
+   },
+   "Export": {
+    "Name": "BedrockAgentLambda:LambdaHookFunctionArn"
+   }
+  }
+ }
+}
