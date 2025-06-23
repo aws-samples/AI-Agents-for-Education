@@ -6,7 +6,7 @@ This repository showcases example Bedrock Agents created for educational use cas
 
 - **Data:** Sample data that connects to the agents.
 - **Tools:** Tools for agents to use.
-- **Production:** Web UI and Bedrock agent integration.
+- **Production:** Web UI (Lex, Streamlit, LibreChat) for Bedrock agent integration.
 
 ## Agent Example 1: Course Recommendation Agent
 
@@ -44,7 +44,7 @@ This repository showcases example Bedrock Agents created for educational use cas
 **Launch Agent:** Run `visual-math-agent.ipynb` notebook to deploy the agent in your AWS account. 
 
 ## Agent Example 3: LibreChat Analysis Agent
-- **Description:** Agent helping LibreChat admin analyzing user activities on LibreChat (![deployed on AWS](https://github.com/sudheermanubolu/librechat-cdk/tree/main))
+- **Description:** Agent helping LibreChat admin analyzing user activities on LibreChat ([deployed on AWS](https://github.com/sudheermanubolu/librechat-cdk/tree/main))
 - **Target Audience:** LibreChat users
 - **Sample questions:** what's user activities in the past 7 days
 
