@@ -43,9 +43,14 @@ This repository showcases example Bedrock Agents created for educational use cas
 
 **Launch Agent:** Run `visual-math-agent.ipynb` notebook to deploy the agent in your AWS account. 
 
-## Agent Example 3: Course Assistant Agent (Coming soon)
-- **Description:** Agent navigating course content to answer questions and making study plans.
-- **Target Audience:** Students
+## Agent Example 3: LibreChat Analysis Agent
+- **Description:** Agent helping LibreChat admin analyzing user activities on LibreChat (![deployed on AWS](https://github.com/sudheermanubolu/librechat-cdk/tree/main))
+- **Target Audience:** LibreChat users
+- **Sample questions:** what's user activities in the past 7 days
+
+### Deployment Instructions of LibreChat Analysis Agent
+
+**Launch Agent:** Deploy the cloudformation stack using librechat-log-analysis-agent-stack.yaml in Librechat_log_analysis_agent folder.
 
 ## Agent Example 4: Multi-agent system for course recommendation
 This is a multi-agent collaboration architecture for Agent Example 1
