@@ -5,51 +5,46 @@ Parameters:
   VPCID:
     Type: AWS::EC2::VPC::Id
     Description: VPC ID where DocumentDB is deployed
-  
   DocDBSubnet:
     Type: AWS::EC2::Subnet::Id
     Description: Subnet ID where DocumentDB is deployed
-  
   DocDBSecurityGroupId:
     Type: AWS::EC2::SecurityGroup::Id
     Description: Security Group ID that allows access to DocumentDB
-  
   DocumentDBSecretName:
     Type: String
     Default: LibreChat/docdb/app-user
     Description: Name of the AWS Secrets Manager secret containing DocumentDB credentials
-  
   BedrockModelId:
     Type: String
     Default: us.anthropic.claude-3-5-sonnet-20241022-v2:0
     Description: Bedrock model ID to use for the agent
-    
   LambdaLayerS3Bucket:
     Type: String
     Default: aws-lambda-layers-public
     Description: S3 bucket containing the pymongo Lambda layer
-    
   LambdaLayerS3Key:
     Type: String
     Default: pymongo-layer.zip
     Description: S3 key for the pymongo Lambda layer
 
 Resources:
-  # Lambda Layer for pymongo
+  # 1) pymongo Lambda layer (name now stack-unique)
   PyMongoLayer:
     Type: AWS::Lambda::LayerVersion
     Properties:
-      LayerName: pymongo-layer
+      LayerName: !Sub '${AWS::StackName}-pymongo-layer'
       Description: Layer containing pymongo library
       Content:
         S3Bucket: !Ref LambdaLayerS3Bucket
-        S3Key: !Ref LambdaLayerS3Key
+        S3Key:   !Ref LambdaLayerS3Key
       CompatibleRuntimes:
         - python3.8
         - python3.9
         - python3.10
         - python3.11
 
+  # … (your IAM roles, policies, secrets access, etc. — unchanged) …
   # Lambda execution role for DocumentDB access
   DocDBLambdaExecutionRole:
     Type: AWS::IAM::Role
@@ -74,13 +69,13 @@ Resources:
                   - secretsmanager:GetSecretValue
                 Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DocumentDBSecretName}*'
 
-  # Lambda function to query DocumentDB
+  # 2) Mongo-analysis Lambda (now named with stack prefix)
   MongoAnalysisLambda:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: librechat-mongo-analysis
+      FunctionName: !Sub '${AWS::StackName}-librechat-mongo-analysis'
       Handler: index.lambda_handler
-      Role: !GetAtt DocDBLambdaExecutionRole.Arn
+      Role:    !GetAtt DocDBLambdaExecutionRole.Arn
       Code:
         ZipFile: |
           import boto3
@@ -526,6 +521,7 @@ Resources:
         Variables:
           SECRET_NAME: !Ref DocumentDBSecretName
 
+
   # Bedrock Agent Role
   BedrockAgentRole:
     Type: AWS::IAM::Role
@@ -547,13 +543,13 @@ Resources:
               - Effect: Allow
                 Action:
                   - lambda:InvokeFunction
-                Resource: !GetAtt MongoAnalysisLambda.Arn
+                Resource: !GetAtt MongoAnalysisLambda.Arn  
 
-  # Bedrock Agent
+  # 9) Bedrock Agent + Alias (both named uniquely)
   LogAnalysisAgent:
     Type: AWS::Bedrock::Agent
     Properties:
-      AgentName: LibreChatLogAnalysisAgent
+      AgentName: !Sub '${AWS::StackName}-LibreChatLogAnalysisAgent'
       AgentResourceRoleArn: !GetAtt BedrockAgentRole.Arn
       Description: Agent for analyzing LibreChat logs and user activity
       IdleSessionTTLInSeconds: 1800
@@ -627,14 +623,13 @@ Resources:
                 Parameters: {}
       FoundationModel: !Ref BedrockModelId
 
-  # Bedrock Agent Alias
   LogAnalysisAgentAlias:
     Type: AWS::Bedrock::AgentAlias
     DependsOn: LogAnalysisAgent
     Properties:
       AgentId: !GetAtt LogAnalysisAgent.AgentId
-      AgentAliasName: Production
-      Description: Production alias for LibreChat Log Analysis Agent
+      AgentAliasName: !Sub '${AWS::StackName}-Production'
+      Description: Production alias
 
   # Grant Bedrock Agent permission to invoke the Lambda
   BedrockAgentInvokePermission:
@@ -644,6 +639,7 @@ Resources:
       Action: lambda:InvokeFunction
       Principal: bedrock.amazonaws.com
       SourceArn: !GetAtt LogAnalysisAgent.AgentArn          # the ARN of your Bedrock Agent
+
 
 
   # Lambda execution role for API Gateway integration
@@ -669,12 +665,12 @@ Resources:
                   - bedrock:InvokeAgent
                 Resource: !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent-alias/${LogAnalysisAgent.AgentId}/*'
 
-  # Lambda function to invoke Bedrock Agent
+  # 3) API Gateway → Bedrock-invoke Lambda (also stack-unique)
   ApiGatewayLambda:
     Type: AWS::Lambda::Function
     DependsOn: LogAnalysisAgentAlias
     Properties:
-      FunctionName: apigateway-to-bedrockagent
+      FunctionName: !Sub '${AWS::StackName}-apigateway-to-bedrockagent'
       Handler: index.lambda_handler
       Role: !GetAtt ApiGatewayLambdaRole.Arn
       Code:
@@ -1027,58 +1023,54 @@ Resources:
           BEDROCK_AGENT_ID: !GetAtt LogAnalysisAgent.AgentId
           BEDROCK_AGENT_ALIAS_ID: !GetAtt LogAnalysisAgentAlias.AgentAliasId
 
-  # API Gateway REST API
+  # 4) API Gateway REST API (unique name)
   ApiGateway:
     Type: AWS::ApiGateway::RestApi
     Properties:
-      Name: LibreChatLogAnalysisAPI
-      Description: API Gateway for LibreChat Log Analysis Agent
+      Name: !Sub '${AWS::StackName}-LibreChatLogAnalysisAPI'
+      Description: API for ${AWS::StackName} Log Analysis Agent
       EndpointConfiguration:
-        Types:
-          - REGIONAL
+        Types: [ REGIONAL ]
 
-  # API Gateway Resource
-  ApiResource:
+  # 5) /chat resource + methods (as before)
+  ChatResource:
     Type: AWS::ApiGateway::Resource
     Properties:
       RestApiId: !Ref ApiGateway
-      ParentId: !GetAtt ApiGateway.RootResourceId
-      PathPart: analyze
+      ParentId:  !GetAtt ApiGateway.RootResourceId
+      PathPart:  chat
 
-  # API Gateway Method
-  ApiMethod:
+  ChatPostMethod:
     Type: AWS::ApiGateway::Method
     Properties:
-      RestApiId: !Ref ApiGateway
-      ResourceId: !Ref ApiResource
-      HttpMethod: POST
+      RestApiId:     !Ref ApiGateway
+      ResourceId:    !Ref ChatResource
+      HttpMethod:    POST
       AuthorizationType: NONE
+      ApiKeyRequired:   true
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
         Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ApiGatewayLambda.Arn}/invocations'
 
-  # API Gateway CORS Method
-  ApiCorsMethod:
+  ChatOptionsMethod:
     Type: AWS::ApiGateway::Method
     Properties:
-      RestApiId: !Ref ApiGateway
-      ResourceId: !Ref ApiResource
+      RestApiId:  !Ref ApiGateway
+      ResourceId: !Ref ChatResource
       HttpMethod: OPTIONS
       AuthorizationType: NONE
       Integration:
         Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        PassthroughBehavior: WHEN_NO_MATCH
         IntegrationResponses:
           - StatusCode: 200
             ResponseParameters:
               method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
-              method.response.header.Access-Control-Allow-Methods: "'GET,POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
               method.response.header.Access-Control-Allow-Origin: "'*'"
-            ResponseTemplates:
-              application/json: "{}"
-        PassthroughBehavior: WHEN_NO_MATCH
-        RequestTemplates:
-          application/json: '{"statusCode": 200}'
       MethodResponses:
         - StatusCode: 200
           ResponseParameters:
@@ -1086,54 +1078,157 @@ Resources:
             method.response.header.Access-Control-Allow-Methods: true
             method.response.header.Access-Control-Allow-Origin: true
 
-  # API Gateway Deployment
+  # 6) /chat/completions
+  ChatCompletionsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId:  !Ref ApiGateway
+      ParentId:   !Ref ChatResource
+      PathPart:   completions
+
+  ChatCompletionsPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId:     !Ref ApiGateway
+      ResourceId:    !Ref ChatCompletionsResource
+      HttpMethod:    POST
+      AuthorizationType: NONE
+      ApiKeyRequired:   true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ApiGatewayLambda.Arn}/invocations'
+
+  ChatCompletionsOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId:  !Ref ApiGateway
+      ResourceId: !Ref ChatCompletionsResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        PassthroughBehavior: WHEN_NO_MATCH
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # 7) Deployment & prod stage
   ApiDeployment:
     Type: AWS::ApiGateway::Deployment
     DependsOn:
-      - ApiMethod
-      - ApiCorsMethod
+      - ChatPostMethod
+      - ChatOptionsMethod
+      - ChatCompletionsPostMethod
+      - ChatCompletionsOptionsMethod
     Properties:
       RestApiId: !Ref ApiGateway
       StageName: prod
 
-  # Lambda Permission for API Gateway
-  ApiGatewayLambdaPermission:
+  # 8) Permissions for both endpoints
+  ApiGatewayLambdaPermissionChat:
     Type: AWS::Lambda::Permission
     Properties:
       Action: lambda:InvokeFunction
       FunctionName: !Ref ApiGatewayLambda
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/POST/analyze'
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/POST/chat'
+
+  ApiGatewayLambdaPermissionChatCompletions:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ApiGatewayLambda
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/POST/chat/completions'
+
+
+
+  # 10) API Key + Usage Plan (both named with prefix)
+  DeveloperApiKey:
+    Type: AWS::ApiGateway::ApiKey
+    Properties:
+      Name: !Sub '${AWS::StackName}-developer-api-key'
+      Enabled: true
+      GenerateDistinctId: true
+
+  DeveloperUsagePlan:
+    Type: AWS::ApiGateway::UsagePlan
+    DependsOn:
+      - ApiDeployment
+    Properties:
+      UsagePlanName: !Sub '${AWS::StackName}-developer-plan'
+      Throttle:
+        RateLimit: 10
+        BurstLimit: 10
+      Quota:
+        Limit: 1000
+        Period: DAY
+      ApiStages:
+        - ApiId: !Ref ApiGateway
+          Stage: prod
+
+  DeveloperUsagePlanKey:
+    Type: AWS::ApiGateway::UsagePlanKey
+    DependsOn:
+      - DeveloperUsagePlan
+      - DeveloperApiKey
+    Properties:
+      KeyId:       !Ref DeveloperApiKey
+      KeyType:     API_KEY
+      UsagePlanId: !Ref DeveloperUsagePlan
 
 Outputs:
-  ApiGatewayUrl:
-    Description: URL of the API Gateway endpoint to configure in LibreChat
-    Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/analyze'
-  
+  ChatEndpoint:
+    Description: URL for POST /chat
+    Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/chat'
+
+  ChatCompletionsEndpoint:
+    Description: URL for POST /chat/completions
+    Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/chat/completions'
+
+  ApiKey:
+    Description: API Key for accessing the above endpoints
+    Value: !Ref DeveloperApiKey
+
+  UsagePlanId:
+    Description: Usage Plan ID for developer-plan
+    Value: !Ref DeveloperUsagePlan
+
   BedrockAgentId:
     Description: ID of the created Bedrock Agent
     Value: !GetAtt LogAnalysisAgent.AgentId
-  
+
   BedrockAgentAliasId:
     Description: ID of the created Bedrock Agent Alias
     Value: !GetAtt LogAnalysisAgentAlias.AgentAliasId
-  
+
   MongoAnalysisLambdaArn:
-    Description: ARN of the Lambda function that queries DocumentDB
+    Description: ARN of the Mongo-analysis Lambda
     Value: !GetAtt MongoAnalysisLambda.Arn
-  
+
   ApiGatewayLambdaArn:
-    Description: ARN of the Lambda function that integrates with API Gateway
+    Description: ARN of the API-to-Bedrock Lambda
     Value: !GetAtt ApiGatewayLambda.Arn
-  
+
   LibreChatConfigExample:
-    Description: Example configuration for LibreChat to use this agent
+    Description: Example LibreChat config snippet
     Value: !Sub |
-      # Add this to your LibreChat configuration:
       ENDPOINTS:
         custom:
-          - name: "Log Analysis"
-            apiKey: ""
+          - name: "${AWS::StackName}-LogAnalysis"
+            apiKey: "<PUT_API_KEY_HERE>"
             baseURL: "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod"
             models:
               - "log-analysis"
