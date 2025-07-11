@@ -1,0 +1,21 @@
+# Strands Agents SDK and Tools
+strands-agents>=0.1.0
+strands-agents-tools>=0.1.0
+
+# Database and data handling
+# sqlite3  # Usually included with Python
+pandas>=1.5.0
+numpy>=1.21.0
+
+# AWS SDK (required by strands-agents-tools for Bedrock access)
+boto3>=1.34.90
+botocore>=1.34.90
+
+# Logging and utilities
+python-dotenv>=0.19.0
+pydantic>=2.0.0
+
+# Optional: For enhanced functionality
+# streamlit>=1.28.0  # For web UI
+# fastapi>=0.100.0   # For API deployment
+# uvicorn>=0.23.0    # ASGI server for FastAPI

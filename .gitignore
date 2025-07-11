@@ -3,3 +3,21 @@
 *.pdf
 **/.ipynb_checkpoints/
 **/__pycache__/
+
+# Virtual environments
+venv/
+env/
+.venv/
+.env/
+*/venv/
+*/env/
+
+# macOS system files
+.DS_Store
+**/.DS_Store
+
+# Configuration files
+kb_config.json
+
+# Generated notebooks
+strands-implementation/course-recommendation-strands-agent.ipynb

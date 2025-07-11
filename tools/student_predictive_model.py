@@ -31,7 +31,7 @@ def lambda_handler(event, context):
         course_id = None
         for param in parameters:
             if param["name"] == "course_id":
-                question = param["value"]
+                course_id = param["value"]
 
         if not course_id:
             raise Exception("Missing mandatory parameter: course_id")

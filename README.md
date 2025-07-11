@@ -1,12 +1,13 @@
 # Bedrock Agents for EDU Use Cases
 
-This repository showcases example Bedrock Agents created for educational use cases.
+This repository showcases example agents created for educational use cases, including both AWS Bedrock Agents and Strands Agents SDK implementations.
 
 ## Repo Structure
 
 - **Data:** Sample data that connects to the agents.
 - **Tools:** Tools for agents to use.
 - **Production:** Web UI (Lex, Streamlit, LibreChat) for Bedrock agent integration.
+- **strands-implementation:** Strands Agents SDK implementation of the course recommendation agent.
 
 ## Agent Example 1: Course Recommendation Agent
 
@@ -24,6 +25,8 @@ This repository showcases example Bedrock Agents created for educational use cas
 
 ### Deployment Instructions of Course Recommendation Agent
 
+#### Option A: AWS Bedrock Agents
+
 1. **Prepare Data:** 
 
 1.1 ***Structured data:*** Run the `data-prep-course-recommendation-agent-short.ipynb` notebook `Structured data preparation` section to prepare the tables.
@@ -33,6 +36,25 @@ This repository showcases example Bedrock Agents created for educational use cas
 2. **Launch Agent:** Run `course-recommendation-agent.ipynb` notebook to deploy the agent in your AWS account.
 
 3. **Test Agent:** Use the above sample questions to test agent.
+
+#### Option B: Strands Agents SDK
+
+**Method 1: Quick Start (Recommended)**
+```bash
+# Run from main directory - automatically handles virtual environment setup
+./run_agent.sh
+```
+
+**Method 2: Manual Setup**
+```bash
+cd strands-implementation
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements-strands.txt
+python agent.py
+```
+
+See the [Strands Implementation README](./strands-implementation/README.md) for detailed instructions.
 
 ## Agent Example 2: Visual Math Agent
 - **Description:** Agent creating math questions with visual artifacts
