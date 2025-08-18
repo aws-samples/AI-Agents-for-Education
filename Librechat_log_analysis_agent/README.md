@@ -2,13 +2,13 @@
 
 ### Prerequisites
 
-Before you proceed to create the Bedrock Agent, make sure you have Librechat solution deployed and running on AWS. For instructions on how to set it up, please refer to:
+Before you proceed to create the Agent, make sure you have Librechat solution deployed and running on AWS. For instructions on how to set it up, please refer to:
 ### https://github.com/sudheermanubolu/librechat-cdk/tree/main
 
 
 ## Infrastructure Overview
 
-This CloudFormation template creates a serverless infrastructure for the LibreChat Log Analysis Agent, providing a custom endpoint that integrates with LibreChat solution. The architecture leverages AWS Bedrock AgentCore Runtime with Strands SDK to deliver intelligent log analysis capabilities.
+This CloudFormation template creates a serverless infrastructure for the LibreChat Log Analysis Agent, providing a custom endpoint that integrates with LibreChat solution. The architecture leverages AWS Bedrock AgentCore Runtime SDK with Strands Agents to deliver intelligent log analysis capabilities.
 
 ### Core Components
 
